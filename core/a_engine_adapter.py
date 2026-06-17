@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from math import sqrt
 from pathlib import Path
 from typing import Any
 
@@ -133,7 +134,7 @@ def _grid_to_a_scenario(scenario: dict[str, Any]) -> dict[str, Any]:
         },
         "zones": _convert_zones(scenario),
         "roads": _grid_edges(scenario, nodes),
-        "air_routes": [],
+        "air_routes": _air_grid_edges(scenario),
         "units": _convert_units(scenario),
         "events": [],
     }
@@ -264,6 +265,37 @@ def _grid_edges(scenario: dict[str, Any], nodes: dict[str, dict[str, float]]) ->
     return edges
 
 
+def _air_grid_edges(scenario: dict[str, Any]) -> list[dict[str, Any]]:
+    map_data = scenario["map"]
+    width = int(map_data["width"])
+    height = int(map_data["height"])
+    edges = []
+    for y in range(height):
+        for x in range(width):
+            start = (x, y)
+            for end in _air_neighbors(start, width, height):
+                diagonal = start[0] != end[0] and start[1] != end[1]
+                edges.append(
+                    {
+                        "road_id": f"air_{start[0]}_{start[1]}__{end[0]}_{end[1]}",
+                        "from": _node_id(start),
+                        "to": _node_id(end),
+                        "distance": round(sqrt(2), 3) if diagonal else 1.0,
+                        "travel_time_base": _air_travel_time(scenario, end, diagonal),
+                        "status": "open",
+                        "bidirectional": False,
+                        "risk": _air_risk_for_cell(scenario, end),
+                        "labels": {
+                            "grid_from": list(start),
+                            "grid_to": list(end),
+                            "terrain": _terrain_for_cell(scenario, end),
+                            "route_layer": "air_grid",
+                        },
+                    }
+                )
+    return edges
+
+
 def _edge_for_move(
     scenario: dict[str, Any],
     start: tuple[int, int],
@@ -310,6 +342,31 @@ def _base_travel_time(scenario: dict[str, Any], cell: tuple[int, int]) -> float:
     return round(base, 3)
 
 
+def _air_travel_time(
+    scenario: dict[str, Any],
+    cell: tuple[int, int],
+    diagonal: bool,
+) -> float:
+    map_data = scenario["map"]
+    fire = _cell_set(map_data.get("fire", []))
+    congestion = _cell_set(map_data.get("congestion", []))
+    collapse = _cell_set(map_data.get("collapse_cells", []))
+    blocked = _cell_set(map_data.get("blocked", []))
+    buildings = _cell_set(map_data.get("buildings", []))
+    water = _cell_set(map_data.get("water", []))
+
+    base = sqrt(2) if diagonal else 1.0
+    if cell in blocked or cell in buildings or cell in water:
+        base += 0.3
+    if cell in congestion:
+        base += 0.35
+    if cell in collapse:
+        base += 1.1
+    if cell in fire:
+        base += 2.4
+    return round(base, 3)
+
+
 def _risk_for_cell(scenario: dict[str, Any], cell: tuple[int, int]) -> dict[str, float]:
     map_data = scenario["map"]
     fire = _cell_set(map_data.get("fire", []))
@@ -323,6 +380,24 @@ def _risk_for_cell(scenario: dict[str, Any], cell: tuple[int, int]) -> dict[str,
         "damage": 0.95 if cell in blocked else (0.72 if cell in collapse else 0.18),
         "congestion": 0.95 if cell in congestion else (0.12 if cell in roads else 0.28),
         "secondary_disaster": 0.88 if cell in collapse else (0.35 if cell in fire else 0.12),
+    }
+
+
+def _air_risk_for_cell(scenario: dict[str, Any], cell: tuple[int, int]) -> dict[str, float]:
+    map_data = scenario["map"]
+    fire = _cell_set(map_data.get("fire", []))
+    congestion = _cell_set(map_data.get("congestion", []))
+    collapse = _cell_set(map_data.get("collapse_cells", []))
+    blocked = _cell_set(map_data.get("blocked", []))
+    buildings = _cell_set(map_data.get("buildings", []))
+    water = _cell_set(map_data.get("water", []))
+
+    over_obstacle = cell in blocked or cell in buildings or cell in water
+    return {
+        "fire": 0.95 if cell in fire else 0.05,
+        "damage": 0.32 if over_obstacle else (0.48 if cell in collapse else 0.08),
+        "congestion": 0.35 if cell in congestion else 0.05,
+        "secondary_disaster": 0.70 if cell in collapse else (0.45 if cell in fire else 0.08),
     }
 
 
@@ -415,7 +490,7 @@ def _project_route_onto_grid_graph(
         return route
 
     grid_route["route_layer"] = (
-        "grid_air" if _unit_type(a_scenario, unit_id) == "drone" else "ground"
+        "air_grid" if _unit_type(a_scenario, unit_id) == "drone" else "ground"
     )
     grid_route["adapter_projection"] = "direct_route_reprojected_to_b_grid"
     return grid_route
@@ -432,9 +507,15 @@ def _run_grid_astar_for_assignment(
     if not unit or not goal:
         return None
 
+    route_graph = (
+        a_scenario.get("air_routes", [])
+        if unit["type"] == "drone"
+        else a_scenario["roads"]
+    )
+
     try:
         return modules["risk_aware_astar"](
-            a_scenario["roads"],
+            route_graph,
             nodes=a_scenario["nodes"],
             start=unit["start_node"],
             goal=goal,
@@ -442,7 +523,7 @@ def _run_grid_astar_for_assignment(
             risk_weights=a_scenario["config"]["weights"]["astar_risk"],
             unit_type=unit["type"],
             max_fire_risk=unit.get("constraints", {}).get("max_fire_risk"),
-            route_layer="grid_air" if unit["type"] == "drone" else "ground",
+            route_layer="air_grid" if unit["type"] == "drone" else "ground",
         )
     except Exception:
         return None
@@ -580,6 +661,20 @@ def _neighbors(cell: tuple[int, int], width: int, height: int) -> list[tuple[int
         for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1))
         if 0 <= nx < width and 0 <= ny < height
     ]
+
+
+def _air_neighbors(cell: tuple[int, int], width: int, height: int) -> list[tuple[int, int]]:
+    x, y = cell
+    neighbors = []
+    for dx in (-1, 0, 1):
+        for dy in (-1, 0, 1):
+            if dx == 0 and dy == 0:
+                continue
+            nx = x + dx
+            ny = y + dy
+            if 0 <= nx < width and 0 <= ny < height:
+                neighbors.append((nx, ny))
+    return neighbors
 
 
 def _cell_set(cells: Any) -> set[tuple[int, int]]:
