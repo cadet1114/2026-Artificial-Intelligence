@@ -142,14 +142,10 @@ def main() -> None:
     _ensure_cost_model_current()
 
     st.title("AI Emergency Commander：灾后救援智能指挥系统")
-    st.caption("B 分工控制台：24×24 俯视像素灾区地图、自然语言灾情更新、可解释推理、任务分配与动态重规划")
+    st.caption("B 分工控制台：24×24 俯视像素灾区地图、A 同学算法适配、可解释推理、任务分配与动态重规划")
 
     with st.sidebar:
         st.header("演示控制台")
-        _render_api_controls()
-
-        st.divider()
-        _render_algorithm_controls()
 
         st.divider()
         st.subheader("场景初始化")
@@ -162,17 +158,6 @@ def main() -> None:
         )
         if st.button("随机生成灾区场景", use_container_width=True):
             _load_random_scene()
-
-        st.divider()
-        st.subheader("自然语言灾情更新")
-        st.text_area(
-            "灾情变化",
-            key="disaster_update_text",
-            height=150,
-            placeholder="例如：无人机发现 C 区北侧道路可以通行，但 C 区火势扩大，SOS 信号增强。",
-        )
-        if st.button("应用灾情更新并重新规划", use_container_width=True):
-            _apply_natural_language_update()
 
         st.divider()
         st.subheader("演示测试")
@@ -276,21 +261,21 @@ def _init_session_state() -> None:
     st.session_state.setdefault("status_message", "")
     st.session_state.setdefault("scenario_source", "预设 scenario.json")
     st.session_state.setdefault("scenario_seed", "-")
-    st.session_state.setdefault("algorithm_engine", ENGINE_DEMO)
-    st.session_state.setdefault("last_algorithm_engine", st.session_state.algorithm_engine)
-    st.session_state.setdefault("engine_status", "当前使用 B 演示引擎。")
+    st.session_state.algorithm_engine = ENGINE_A_ADAPTER
+    st.session_state.last_algorithm_engine = ENGINE_A_ADAPTER
+    st.session_state.engine_status = "默认使用 A 同学算法适配。"
     st.session_state.setdefault("engine_summary", {})
     st.session_state.setdefault("route_details", {})
     st.session_state.setdefault("previous_route_details", {})
     st.session_state.setdefault("last_update_summary", "")
     st.session_state.setdefault("qwen_api_key", "")
-    st.session_state.setdefault("qwen_report_enabled", True)
-    st.session_state.setdefault("qwen_text_backend", "千问 API")
-    st.session_state.setdefault("qwen_text_model", "qwen-max")
+    st.session_state.qwen_report_enabled = True
+    st.session_state.qwen_text_backend = "千问 API"
+    st.session_state.qwen_text_model = "qwen-max"
     st.session_state.setdefault("local_qwen_endpoint", "http://127.0.0.1:8000/v1/chat/completions")
     st.session_state.setdefault("local_qwen_model", "qwen2.5-7b-instruct")
     st.session_state.setdefault("local_qwen_api_key", "")
-    st.session_state.setdefault("qwen_vl_model", "qwen-vl-max")
+    st.session_state.qwen_vl_model = "qwen-vl-max"
     st.session_state.setdefault("qwen_image_mode", "标准网格图识别")
     st.session_state.setdefault("qwen_raw_json", {})
     st.session_state.setdefault("qwen_raw_text", "")
